@@ -343,7 +343,7 @@ hash_sha256_verify() {
   BASENAME=${TARGET##*/}
   want=$(grep "${BASENAME}" "${checksums}" 2>/dev/null | tr '\t' ' ' | cut -d ' ' -f 1)
   if [ -z "$want" ]; then
-    log_err "hash_sha256_verify unable to find checksum for '${TARGET}' in '${checksums}'"
+    log_err "hash_sha256_verify unable to find '${BASENAME}' checksum for '${TARGET}' in '${checksums}'"
     return 1
   fi
   got=$(hash_sha256 "$TARGET")
@@ -359,7 +359,7 @@ End of functions from https://github.com/client9/shlib
 EOF
 
 PROJECT_NAME="act"
-OWNER=nektos
+OWNER=Gasol
 REPO="act"
 BINARY=act
 FORMAT=tar.gz
