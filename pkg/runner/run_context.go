@@ -257,7 +257,7 @@ func (rc *RunContext) startJobContainer() common.Executor {
 			Name:        name,
 			Env:         envList,
 			Mounts:      mounts,
-			NetworkMode: "host",
+			NetworkMode: "bridge",
 			Binds:       binds,
 			Stdout:      logWriter,
 			Stderr:      logWriter,
