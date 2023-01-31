@@ -94,6 +94,7 @@ func (j *TestJobFileInfo) runTest(ctx context.Context, t *testing.T, cfg *Config
 		ReuseContainers:       false,
 		Env:                   cfg.Env,
 		Secrets:               cfg.Secrets,
+		Inputs:                cfg.Inputs,
 		GitHubInstance:        "github.com",
 		ContainerArchitecture: cfg.ContainerArchitecture,
 	}
@@ -144,7 +145,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "uses-composite-with-error", "push", "Job 'failing-composite-action' failed", platforms, secrets},
 		{workdir, "uses-nested-composite", "push", "", platforms, secrets},
 		{workdir, "remote-action-composite-js-pre-with-defaults", "push", "", platforms, secrets},
-		{workdir, "uses-workflow", "push", "reusable workflows are currently not supported (see https://github.com/nektos/act/issues/826 for updates)", platforms, secrets},
+		{workdir, "uses-workflow", "push", "", platforms, map[string]string{"secret": "keep_it_private"}},
 		{workdir, "uses-workflow", "pull_request", "", platforms, map[string]string{"secret": "keep_it_private"}},
 		{workdir, "uses-docker-url", "push", "", platforms, secrets},
 		{workdir, "act-composite-env-test", "push", "", platforms, secrets},
@@ -170,6 +171,7 @@ func TestRunEvent(t *testing.T) {
 		{workdir, "remote-action-js", "push", "", map[string]string{"ubuntu-latest": "catthehacker/ubuntu:runner-latest"}, secrets}, // Test if this works with non root container
 		{workdir, "matrix", "push", "", platforms, secrets},
 		{workdir, "matrix-include-exclude", "push", "", platforms, secrets},
+		{workdir, "matrix-exitcode", "push", "Job 'test' failed", platforms, secrets},
 		{workdir, "commands", "push", "", platforms, secrets},
 		{workdir, "workdir", "push", "", platforms, secrets},
 		{workdir, "defaults-run", "push", "", platforms, secrets},
@@ -200,6 +202,8 @@ func TestRunEvent(t *testing.T) {
 		{"../model/testdata", "strategy", "push", "", platforms, secrets}, // TODO: move all testdata into pkg so we can validate it with planner and runner
 		// {"testdata", "issue-228", "push", "", platforms, }, // TODO [igni]: Remove this once everything passes
 		{"../model/testdata", "container-volumes", "push", "", platforms, secrets},
+		{workdir, "path-handling", "push", "", platforms, secrets},
+		{workdir, "do-not-leak-step-env-in-composite", "push", "", platforms, secrets},
 	}
 
 	for _, table := range tables {
@@ -292,12 +296,14 @@ func TestRunEventHostEnvironment(t *testing.T) {
 		}...)
 	} else {
 		platforms := map[string]string{
-			"self-hosted": "-self-hosted",
+			"self-hosted":   "-self-hosted",
+			"ubuntu-latest": "-self-hosted",
 		}
 
 		tables = append(tables, []TestJobFileInfo{
 			{workdir, "nix-prepend-path", "push", "", platforms, secrets},
 			{workdir, "inputs-via-env-context", "push", "", platforms, secrets},
+			{workdir, "do-not-leak-step-env-in-composite", "push", "", platforms, secrets},
 		}...)
 	}
 
@@ -415,6 +421,27 @@ func TestRunEventSecrets(t *testing.T) {
 	assert.NoError(t, err, "Failed to read .secrets")
 
 	tjfi.runTest(context.Background(), t, &Config{Secrets: secrets, Env: env})
+}
+
+func TestRunActionInputs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test")
+	}
+	workflowPath := "input-from-cli"
+
+	tjfi := TestJobFileInfo{
+		workdir:      workdir,
+		workflowPath: workflowPath,
+		eventName:    "workflow_dispatch",
+		errorMessage: "",
+		platforms:    platforms,
+	}
+
+	inputs := map[string]string{
+		"SOME_INPUT": "input",
+	}
+
+	tjfi.runTest(context.Background(), t, &Config{Inputs: inputs})
 }
 
 func TestRunEventPullRequest(t *testing.T) {
