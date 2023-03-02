@@ -148,9 +148,6 @@ func TestSetupEnv(t *testing.T) {
 	sm.On("getStepModel").Return(step)
 	sm.On("getEnv").Return(&env)
 
-	cm.On("UpdateFromImageEnv", &env).Return(func(ctx context.Context) error { return nil })
-	cm.On("UpdateFromEnv", "/var/run/act/workflow/envs.txt", &env).Return(func(ctx context.Context) error { return nil })
-
 	err := setupEnv(context.Background(), sm)
 	assert.Nil(t, err)
 
@@ -174,12 +171,11 @@ func TestSetupEnv(t *testing.T) {
 		"GITHUB_ACTION_REPOSITORY": "",
 		"GITHUB_API_URL":           "https:///api/v3",
 		"GITHUB_BASE_REF":          "",
-		"GITHUB_ENV":               "/var/run/act/workflow/envs.txt",
 		"GITHUB_EVENT_NAME":        "",
 		"GITHUB_EVENT_PATH":        "/var/run/act/workflow/event.json",
 		"GITHUB_GRAPHQL_URL":       "https:///api/graphql",
 		"GITHUB_HEAD_REF":          "",
-		"GITHUB_JOB":               "",
+		"GITHUB_JOB":               "1",
 		"GITHUB_RETENTION_DAYS":    "0",
 		"GITHUB_RUN_ID":            "runId",
 		"GITHUB_RUN_NUMBER":        "1",
