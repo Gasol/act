@@ -19,6 +19,7 @@ type EvaluationEnvironment struct {
 	Steps    map[string]*model.StepResult
 	Runner   map[string]interface{}
 	Secrets  map[string]string
+	Vars     map[string]string
 	Strategy map[string]interface{}
 	Matrix   map[string]interface{}
 	Needs    map[string]Needs
@@ -148,6 +149,7 @@ func (impl *interperterImpl) evaluateNode(exprNode actionlint.ExprNode) (interfa
 	}
 }
 
+//nolint:gocyclo
 func (impl *interperterImpl) evaluateVariable(variableNode *actionlint.VariableNode) (interface{}, error) {
 	switch strings.ToLower(variableNode.Name) {
 	case "github":
@@ -167,6 +169,8 @@ func (impl *interperterImpl) evaluateVariable(variableNode *actionlint.VariableN
 		return impl.env.Runner, nil
 	case "secrets":
 		return impl.env.Secrets, nil
+	case "vars":
+		return impl.env.Vars, nil
 	case "strategy":
 		return impl.env.Strategy, nil
 	case "matrix":
@@ -372,8 +376,16 @@ func (impl *interperterImpl) compareValues(leftValue reflect.Value, rightValue r
 
 		return impl.compareNumber(leftValue.Float(), rightValue.Float(), kind)
 
+	case reflect.Invalid:
+		if rightValue.Kind() == reflect.Invalid {
+			return true, nil
+		}
+
+		// not possible situation - params are converted to the same type in code above
+		return nil, fmt.Errorf("Compare params of Invalid type: left: %+v, right: %+v", leftValue.Kind(), rightValue.Kind())
+
 	default:
-		return nil, fmt.Errorf("TODO: evaluateCompare not implemented! left: %+v, right: %+v", leftValue.Kind(), rightValue.Kind())
+		return nil, fmt.Errorf("Compare not implemented for types: left: %+v, right: %+v", leftValue.Kind(), rightValue.Kind())
 	}
 }
 
@@ -542,6 +554,10 @@ func (impl *interperterImpl) evaluateLogicalCompare(compareNode *actionlint.Logi
 
 	leftValue := reflect.ValueOf(left)
 
+	if IsTruthy(left) == (compareNode.Kind == actionlint.LogicalOpNodeKindOr) {
+		return impl.getSafeValue(leftValue), nil
+	}
+
 	right, err := impl.evaluateNode(compareNode.Right)
 	if err != nil {
 		return nil, err
@@ -551,17 +567,8 @@ func (impl *interperterImpl) evaluateLogicalCompare(compareNode *actionlint.Logi
 
 	switch compareNode.Kind {
 	case actionlint.LogicalOpNodeKindAnd:
-		if IsTruthy(left) {
-			return impl.getSafeValue(rightValue), nil
-		}
-
-		return impl.getSafeValue(leftValue), nil
-
+		return impl.getSafeValue(rightValue), nil
 	case actionlint.LogicalOpNodeKindOr:
-		if IsTruthy(left) {
-			return impl.getSafeValue(leftValue), nil
-		}
-
 		return impl.getSafeValue(rightValue), nil
 	}
 

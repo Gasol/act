@@ -11,11 +11,11 @@ import (
 	"regexp"
 	"strings"
 
+	gogit "github.com/go-git/go-git/v5"
+
 	"github.com/nektos/act/pkg/common"
 	"github.com/nektos/act/pkg/common/git"
 	"github.com/nektos/act/pkg/model"
-
-	gogit "github.com/go-git/go-git/v5"
 )
 
 type stepActionRemote struct {
@@ -46,23 +46,22 @@ func (sar *stepActionRemote) prepareActionExecutor() common.Executor {
 			return fmt.Errorf("Expected format {org}/{repo}[/path]@ref. Actual '%s' Input string was not in a correct format", sar.Step.Uses)
 		}
 
-		sar.remoteAction.URL = sar.RunContext.Config.GitHubInstance
-
 		github := sar.getGithubContext(ctx)
+		sar.remoteAction.URL = github.ServerURL
+
 		if sar.remoteAction.IsCheckout() && isLocalCheckout(github, sar.Step) && !sar.RunContext.Config.NoSkipCheckout {
 			common.Logger(ctx).Debugf("Skipping local actions/checkout because workdir was already copied")
 			return nil
 		}
 
-		sar.remoteAction.URL = sar.RunContext.Config.GitHubInstance
 		for _, action := range sar.RunContext.Config.ReplaceGheActionWithGithubCom {
 			if strings.EqualFold(fmt.Sprintf("%s/%s", sar.remoteAction.Org, sar.remoteAction.Repo), action) {
-				sar.remoteAction.URL = "github.com"
+				sar.remoteAction.URL = "https://github.com"
 				github.Token = sar.RunContext.Config.ReplaceGheActionTokenWithGithubCom
 			}
 		}
 
-		actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), strings.ReplaceAll(sar.Step.Uses, "/", "-"))
+		actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), safeFilename(sar.Step.Uses))
 		gitClone := stepActionRemoteNewCloneExecutor(git.NewGitCloneExecutorInput{
 			URL:   sar.remoteAction.CloneURL(),
 			Ref:   sar.remoteAction.Ref,
@@ -122,7 +121,7 @@ func (sar *stepActionRemote) main() common.Executor {
 				return sar.RunContext.JobContainer.CopyDir(copyToPath, sar.RunContext.Config.Workdir+string(filepath.Separator)+".", sar.RunContext.Config.UseGitIgnore)(ctx)
 			}
 
-			actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), strings.ReplaceAll(sar.Step.Uses, "/", "-"))
+			actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), safeFilename(sar.Step.Uses))
 
 			return sar.runAction(sar, actionDir, sar.remoteAction)(ctx)
 		}),
@@ -181,7 +180,7 @@ func (sar *stepActionRemote) getActionModel() *model.Action {
 
 func (sar *stepActionRemote) getCompositeRunContext(ctx context.Context) *RunContext {
 	if sar.compositeRunContext == nil {
-		actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), strings.ReplaceAll(sar.Step.Uses, "/", "-"))
+		actionDir := fmt.Sprintf("%s/%s", sar.RunContext.ActionCacheDir(), safeFilename(sar.Step.Uses))
 		actionLocation := path.Join(actionDir, sar.remoteAction.Path)
 		_, containerActionDir := getContainerActionPaths(sar.getStepModel(), actionLocation, sar.RunContext)
 
@@ -214,7 +213,7 @@ type remoteAction struct {
 }
 
 func (ra *remoteAction) CloneURL() string {
-	return fmt.Sprintf("https://%s/%s/%s", ra.URL, ra.Org, ra.Repo)
+	return fmt.Sprintf("%s/%s/%s", ra.URL, ra.Org, ra.Repo)
 }
 
 func (ra *remoteAction) IsCheckout() bool {
@@ -240,6 +239,20 @@ func newRemoteAction(action string) *remoteAction {
 		Repo: matches[2],
 		Path: matches[4],
 		Ref:  matches[6],
-		URL:  "github.com",
+		URL:  "https://github.com",
 	}
+}
+
+func safeFilename(s string) string {
+	return strings.NewReplacer(
+		`<`, "-",
+		`>`, "-",
+		`:`, "-",
+		`"`, "-",
+		`/`, "-",
+		`\`, "-",
+		`|`, "-",
+		`?`, "-",
+		`*`, "-",
+	).Replace(s)
 }

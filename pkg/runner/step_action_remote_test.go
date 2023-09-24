@@ -8,20 +8,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nektos/act/pkg/common"
-	"github.com/nektos/act/pkg/common/git"
-	"github.com/nektos/act/pkg/model"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"gopkg.in/yaml.v3"
+
+	"github.com/nektos/act/pkg/common"
+	"github.com/nektos/act/pkg/common/git"
+	"github.com/nektos/act/pkg/model"
 )
 
 type stepActionRemoteMocks struct {
 	mock.Mock
 }
 
-func (sarm *stepActionRemoteMocks) readAction(ctx context.Context, step *model.Step, actionDir string, actionPath string, readFile actionYamlReader, writeFile fileWriter) (*model.Action, error) {
+func (sarm *stepActionRemoteMocks) readAction(_ context.Context, step *model.Step, actionDir string, actionPath string, readFile actionYamlReader, writeFile fileWriter) (*model.Action, error) {
 	args := sarm.Called(step, actionDir, actionPath, readFile, writeFile)
 	return args.Get(0).(*model.Action), args.Error(1)
 }
@@ -612,6 +612,27 @@ func TestStepActionRemotePost(t *testing.T) {
 			// Enshure that StepResults is nil in this test
 			assert.Equal(t, sar.RunContext.StepResults["post-step"], (*model.StepResult)(nil))
 			cm.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_safeFilename(t *testing.T) {
+	tests := []struct {
+		s    string
+		want string
+	}{
+		{
+			s:    "https://test.com/test/",
+			want: "https---test.com-test-",
+		},
+		{
+			s:    `<>:"/\|?*`,
+			want: "---------",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.s, func(t *testing.T) {
+			assert.Equalf(t, tt.want, safeFilename(tt.s), "safeFilename(%v)", tt.s)
 		})
 	}
 }

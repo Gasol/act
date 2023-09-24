@@ -1,10 +1,13 @@
 name: checks
 on: [pull_request, workflow_dispatch]
 
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+
 env:
   ACT_OWNER: ${{ github.repository_owner }}
   ACT_REPOSITORY: ${{ github.repository }}
-  GO_VERSION: 1.18
   CGO_ENABLED: 0
 
 jobs:
@@ -15,14 +18,15 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           check-latest: true
-      - uses: golangci/golangci-lint-action@v3.4.0
+      - uses: golangci/golangci-lint-action@v3.7.0
         with:
-          version: v1.47.2
-      - uses: megalinter/megalinter/flavors/go@v6.19.0
+          version: v1.53
+          only-new-issues: true
+      - uses: megalinter/megalinter/flavors/go@v7.3.0
         env:
           DEFAULT_BRANCH: master
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,10 +42,10 @@ jobs:
         with:
           fetch-depth: 2
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-      - uses: actions/setup-go@v3
+        uses: docker/setup-qemu-action@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           check-latest: true
       - uses: actions/cache@v3
         if: ${{ !env.ACT }}
@@ -54,8 +58,10 @@ jobs:
         uses: ./.github/actions/run-tests
         with:
           upload-logs-name: logs-linux
+      - name: Run act from cli
+        run: go run main.go -P ubuntu-latest=node:16-buster-slim -C ./pkg/runner/testdata/ -W ./basic/push.yml
       - name: Upload Codecov report
-        uses: codecov/codecov-action@v3.1.1
+        uses: codecov/codecov-action@v3.1.4
         with:
           files: coverage.txt
           fail_ci_if_error: true # optional (default = false)
@@ -72,9 +78,9 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 2
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           check-latest: true
       - name: Run Tests
         uses: ./.github/actions/run-tests
@@ -87,9 +93,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v3
+      - uses: actions/setup-go@v4
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: go.mod
           check-latest: true
       - uses: actions/cache@v3
         if: ${{ !env.ACT }}
@@ -99,10 +105,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
       - name: GoReleaser
-        uses: goreleaser/goreleaser-action@v4
+        uses: goreleaser/goreleaser-action@v5
         with:
           version: latest
-          args: release --snapshot --rm-dist
+          args: release --snapshot --clean
       - name: Capture x86_64 (64-bit) Linux binary
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v3

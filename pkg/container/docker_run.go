@@ -189,9 +189,6 @@ type containerReference struct {
 }
 
 func GetDockerClient(ctx context.Context) (cli client.APIClient, err error) {
-	// TODO: this should maybe need to be a global option, not hidden in here?
-	//       though i'm not sure how that works out when there's another Executor :D
-	//		 I really would like something that works on OSX native for eg
 	dockerHost := os.Getenv("DOCKER_HOST")
 
 	if strings.HasPrefix(dockerHost, "ssh://") {
@@ -243,8 +240,8 @@ func RunnerArch(ctx context.Context) string {
 
 	archMapper := map[string]string{
 		"x86_64":  "X64",
-		"386":     "x86",
-		"aarch64": "arm64",
+		"386":     "X86",
+		"aarch64": "ARM64",
 	}
 	if arch, ok := archMapper[info.Architecture]; ok {
 		return arch
@@ -348,7 +345,13 @@ func (cr *containerReference) mergeContainerConfigs(ctx context.Context, config 
 		return nil, nil, fmt.Errorf("Cannot parse container options: '%s': '%w'", input.Options, err)
 	}
 
-	containerConfig, err := parse(flags, copts, "")
+	if len(copts.netMode.Value()) == 0 {
+		if err = copts.netMode.Set("host"); err != nil {
+			return nil, nil, fmt.Errorf("Cannot parse networkmode=host. This is an internal error and should not happen: '%w'", err)
+		}
+	}
+
+	containerConfig, err := parse(flags, copts, runtime.GOOS)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Cannot process container options: '%s': '%w'", input.Options, err)
 	}
@@ -583,7 +586,7 @@ func (cr *containerReference) tryReadID(opt string, cbk func(id int)) common.Exe
 		}
 		exp := regexp.MustCompile(`\d+\n`)
 		found := exp.FindString(sid)
-		id, err := strconv.ParseInt(found[:len(found)-1], 10, 32)
+		id, err := strconv.ParseInt(strings.TrimSpace(found), 10, 32)
 		if err != nil {
 			return nil
 		}
@@ -601,7 +604,7 @@ func (cr *containerReference) tryReadGID() common.Executor {
 	return cr.tryReadID("-g", func(id int) { cr.GID = id })
 }
 
-func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal bool, resp types.HijackedResponse, idResp types.IDResponse, user string, workdir string) error {
+func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal bool, resp types.HijackedResponse, _ types.IDResponse, _ string, _ string) error {
 	logger := common.Logger(ctx)
 
 	cmdResponse := make(chan error)
@@ -644,6 +647,14 @@ func (cr *containerReference) waitForCommand(ctx context.Context, isTerminal boo
 
 		return nil
 	}
+}
+
+func (cr *containerReference) CopyTarStream(ctx context.Context, destPath string, tarStream io.Reader) error {
+	err := cr.cli.CopyToContainer(ctx, cr.id, destPath, tarStream, types.CopyToContainerOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to copy content to container: %w", err)
+	}
+	return nil
 }
 
 func (cr *containerReference) copyDir(dstPath string, srcPath string, useGitIgnore bool) common.Executor {

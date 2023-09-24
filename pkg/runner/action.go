@@ -149,7 +149,7 @@ func runActionImpl(step actionStep, actionDir string, remoteAction *remoteAction
 		logger.Debugf("type=%v actionDir=%s actionPath=%s workdir=%s actionCacheDir=%s actionName=%s containerActionDir=%s", stepModel.Type(), actionDir, actionPath, rc.Config.Workdir, rc.ActionCacheDir(), actionName, containerActionDir)
 
 		switch action.Runs.Using {
-		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16:
+		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16, model.ActionRunsUsingNode20:
 			if err := maybeCopyToActionDir(ctx, step, actionDir, actionPath, containerActionDir); err != nil {
 				return err
 			}
@@ -176,13 +176,14 @@ func runActionImpl(step actionStep, actionDir string, remoteAction *remoteAction
 				model.ActionRunsUsingDocker,
 				model.ActionRunsUsingNode12,
 				model.ActionRunsUsingNode16,
+				model.ActionRunsUsingNode20,
 				model.ActionRunsUsingComposite,
 			}, action.Runs.Using))
 		}
 	}
 }
 
-func setupActionEnv(ctx context.Context, step actionStep, remoteAction *remoteAction) error {
+func setupActionEnv(ctx context.Context, step actionStep, _ *remoteAction) error {
 	rc := step.getRunContext()
 
 	// A few fields in the environment (e.g. GITHUB_ACTION_REPOSITORY)
@@ -257,16 +258,20 @@ func execAsDocker(ctx context.Context, step actionStep, actionName string, based
 
 		if !correctArchExists || rc.Config.ForceRebuild {
 			logger.Debugf("image '%s' for architecture '%s' will be built from context '%s", image, rc.Config.ContainerArchitecture, contextDir)
-			var actionContainer container.Container
+			var buildContext io.ReadCloser
 			if localAction {
-				actionContainer = rc.JobContainer
+				buildContext, err = rc.JobContainer.GetContainerArchive(ctx, contextDir+"/.")
+				if err != nil {
+					return err
+				}
+				defer buildContext.Close()
 			}
 			prepImage = container.NewDockerBuildExecutor(container.NewDockerBuildExecutorInput{
-				ContextDir: contextDir,
-				Dockerfile: fileName,
-				ImageTag:   image,
-				Container:  actionContainer,
-				Platform:   rc.Config.ContainerArchitecture,
+				ContextDir:   contextDir,
+				Dockerfile:   fileName,
+				ImageTag:     image,
+				BuildContext: buildContext,
+				Platform:     rc.Config.ContainerArchitecture,
 			})
 		} else {
 			logger.Debugf("image '%s' for architecture '%s' already exists", image, rc.Config.ContainerArchitecture)
@@ -319,13 +324,13 @@ func evalDockerArgs(ctx context.Context, step step, action *model.Action, cmd *[
 			inputs[k] = eval.Interpolate(ctx, v)
 		}
 	}
-	mergeIntoMap(step.getEnv(), inputs)
+	mergeIntoMap(step, step.getEnv(), inputs)
 
 	stepEE := rc.NewStepExpressionEvaluator(ctx, step)
 	for i, v := range *cmd {
 		(*cmd)[i] = stepEE.Interpolate(ctx, v)
 	}
-	mergeIntoMap(step.getEnv(), action.Runs.Env)
+	mergeIntoMap(step, step.getEnv(), action.Runs.Env)
 
 	ee := rc.NewStepExpressionEvaluator(ctx, step)
 	for k, v := range *step.getEnv() {
@@ -356,7 +361,10 @@ func newStepContainer(ctx context.Context, step step, image string, cmd []string
 	envList = append(envList, fmt.Sprintf("%s=%s", "RUNNER_TEMP", "/tmp"))
 
 	binds, mounts := rc.GetBindsAndMounts()
-
+	networkMode := fmt.Sprintf("container:%s", rc.jobContainerName())
+	if rc.IsHostEnv(ctx) {
+		networkMode = "default"
+	}
 	stepContainer := container.NewContainer(&container.NewContainerInput{
 		Cmd:         cmd,
 		Entrypoint:  entrypoint,
@@ -367,7 +375,7 @@ func newStepContainer(ctx context.Context, step step, image string, cmd []string
 		Name:        createContainerName(rc.jobContainerName(), stepModel.ID),
 		Env:         envList,
 		Mounts:      mounts,
-		NetworkMode: fmt.Sprintf("container:%s", rc.jobContainerName()),
+		NetworkMode: networkMode,
 		Binds:       binds,
 		Stdout:      logWriter,
 		Stderr:      logWriter,
@@ -449,7 +457,8 @@ func hasPreStep(step actionStep) common.Conditional {
 		action := step.getActionModel()
 		return action.Runs.Using == model.ActionRunsUsingComposite ||
 			((action.Runs.Using == model.ActionRunsUsingNode12 ||
-				action.Runs.Using == model.ActionRunsUsingNode16) &&
+				action.Runs.Using == model.ActionRunsUsingNode16 ||
+				action.Runs.Using == model.ActionRunsUsingNode20) &&
 				action.Runs.Pre != "")
 	}
 }
@@ -464,7 +473,7 @@ func runPreStep(step actionStep) common.Executor {
 		action := step.getActionModel()
 
 		switch action.Runs.Using {
-		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16:
+		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16, model.ActionRunsUsingNode20:
 			// defaults in pre steps were missing, however provided inputs are available
 			populateEnvsFromInput(ctx, step.getEnv(), action, rc)
 			// todo: refactor into step
@@ -472,7 +481,7 @@ func runPreStep(step actionStep) common.Executor {
 			var actionPath string
 			if _, ok := step.(*stepActionRemote); ok {
 				actionPath = newRemoteAction(stepModel.Uses).Path
-				actionDir = fmt.Sprintf("%s/%s", rc.ActionCacheDir(), strings.ReplaceAll(stepModel.Uses, "/", "-"))
+				actionDir = fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(stepModel.Uses))
 			} else {
 				actionDir = filepath.Join(rc.Config.Workdir, stepModel.Uses)
 				actionPath = ""
@@ -544,7 +553,8 @@ func hasPostStep(step actionStep) common.Conditional {
 		action := step.getActionModel()
 		return action.Runs.Using == model.ActionRunsUsingComposite ||
 			((action.Runs.Using == model.ActionRunsUsingNode12 ||
-				action.Runs.Using == model.ActionRunsUsingNode16) &&
+				action.Runs.Using == model.ActionRunsUsingNode16 ||
+				action.Runs.Using == model.ActionRunsUsingNode20) &&
 				action.Runs.Post != "")
 	}
 }
@@ -563,7 +573,7 @@ func runPostStep(step actionStep) common.Executor {
 		var actionPath string
 		if _, ok := step.(*stepActionRemote); ok {
 			actionPath = newRemoteAction(stepModel.Uses).Path
-			actionDir = fmt.Sprintf("%s/%s", rc.ActionCacheDir(), strings.ReplaceAll(stepModel.Uses, "/", "-"))
+			actionDir = fmt.Sprintf("%s/%s", rc.ActionCacheDir(), safeFilename(stepModel.Uses))
 		} else {
 			actionDir = filepath.Join(rc.Config.Workdir, stepModel.Uses)
 			actionPath = ""
@@ -579,7 +589,7 @@ func runPostStep(step actionStep) common.Executor {
 		_, containerActionDir := getContainerActionPaths(stepModel, actionLocation, rc)
 
 		switch action.Runs.Using {
-		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16:
+		case model.ActionRunsUsingNode12, model.ActionRunsUsingNode16, model.ActionRunsUsingNode20:
 
 			populateEnvsFromSavedState(step.getEnv(), step, rc)
 
